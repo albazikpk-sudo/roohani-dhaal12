@@ -1,108 +1,27 @@
-
-name: Extract Roohani Dhaal ZIP
+name: Unzip project
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - roohani-dhaal-github-ready.zip
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  extract:
+  unzip:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: true
+      - uses: actions/checkout@v4
 
-      - name: Extract source ZIP safely
-        shell: bash
+      - name: Unzip and commit
         run: |
-          set -euo pipefail
-
-          ZIP="roohani-dhaal-github-ready.zip"
-
-          if [ ! -f "$ZIP" ]; then
-            echo "ERROR: Source ZIP not found: $ZIP"
-            exit 1
-          fi
-
-          mkdir -p /tmp/roohani-source
-
-          python3 - <<'PY'
-          import zipfile
-          from pathlib import Path
-
-          archive = Path("roohani-dhaal-github-ready.zip")
-          destination = Path("/tmp/roohani-source").resolve()
-
-          with zipfile.ZipFile(archive) as z:
-              for item in z.infolist():
-                  target = (destination / item.filename).resolve()
-
-                  if target != destination and destination not in target.parents:
-                      raise SystemExit(
-                          f"Unsafe ZIP path detected: {item.filename}"
-                      )
-
-              z.extractall(destination)
-
-          print("ZIP extracted successfully.")
-          PY
-
-          SOURCE_PACKAGE=$(find /tmp/roohani-source \
-            -maxdepth 5 -type f -name package.json -print -quit)
-
-          if [ -z "$SOURCE_PACKAGE" ]; then
-            echo "ERROR: package.json not found in ZIP."
-            exit 1
-          fi
-
-          SOURCE_DIR=$(dirname "$SOURCE_PACKAGE")
-
-          echo "Source directory: $SOURCE_DIR"
-
-          cp -a "$SOURCE_DIR"/. .
-
-          # Remove old Android build workflow if included in ZIP.
-          rm -f .github/workflows/android-build.yml
-
-          # Verify required source files.
-          test -f package.json
-          test -f index.html
-          test -f capacitor.config.json
-
-          echo "Checking source folders..."
-
-          test -d data
-          test -d public
-          test -d research
-          test -d scripts
-          test -d src
-
-          echo "All required source files and folders are present."
-
-      - name: Commit extracted source
-        shell: bash
-        run: |
-          set -euo pipefail
-
+          ZIP=$(ls *.zip 2>/dev/null | head -1)
+          if [ -z "$ZIP" ]; then echo "::error::No .zip file found in the repository root. Upload roohani-dhaal-github-ready.zip first."; exit 1; fi
+          # GitHub does not let the default token push files under .github/workflows,
+          # so those two files are skipped here and must be added by hand.
+          unzip -o "$ZIP" -x ".github/*"
+          rm -f "$ZIP"
           git config user.name "github-actions[bot]"
-          git config user.email \
-            "41898282+github-actions[bot]@users.noreply.github.com"
-
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-
-          if git diff --cached --quiet; then
-            echo "No changes to commit."
-          else
-            git commit -m "Extract complete Roohani Dhaal source"
-            git push origin HEAD:main
-          fi
+          git commit -m "Unzip project files"
+          git push
