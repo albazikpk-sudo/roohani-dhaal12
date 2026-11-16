@@ -1,0 +1,80 @@
+<!doctype html><meta charset="utf-8"><title>running</title>
+<pre id="out"></pre>
+<iframe id="f" src="../www/index.html" style="width:420px;height:800px"></iframe>
+<script>
+var results=[], f=document.getElementById('f');
+function ok(name,cond,extra){ results.push((cond?'PASS ':'FAIL ')+name+(cond?'':' :: '+extra)); }
+function wait(ms){ return new Promise(function(r){ setTimeout(r,ms); }); }
+function go(w,h){ w.location.hash=h; return wait(60); }
+f.onload = async function(){
+ try{
+  var w=f.contentWindow, d=w.document; await wait(300);
+  var D=w.DUAS_DATA, duas=D.duas;
+  ok('172 duas loaded', duas.length===172, duas.length);
+  ok('ids unique 1..172', new Set(duas.map(x=>x.id)).size===172 && duas[171].id===172);
+  ok('every dua has arabic/urdu/ref/title', duas.every(x=>x.arabic&&x.urdu&&x.ref&&x.title));
+  ok('every dua in at least one category', duas.every(x=>x.cats.length>0));
+  // search
+  var S=w.__rdSearch;
+  var r1=S('نظر بد'); ok('search "نظر بد" finds evil-eye duas 56 & 59', r1.indexOf(56)!==-1&&r1.indexOf(59)!==-1, r1.slice(0,5));
+  var r2=S('نظرِ بد'); ok('search with diacritics same result', JSON.stringify(r1)===JSON.stringify(r2));
+  ok('search by reference "مسلم 2721" finds dua 1', S('مسلم 2721').indexOf(1)!==-1);
+  ok('search Arabic with harakat "أَعُوذُ بِكَ" finds results', S('أَعُوذُ بِكَ').length>10, S('أَعُوذُ بِكَ').length);
+  ok('search Arabic without harakat "اعوذ بك" same as with', S('اعوذ بك').length===S('أَعُوذُ بِكَ').length);
+  ok('search Urdu "شفا" finds results', S('شفا').length>0);
+  ok('search Arabic-Indic digits "٢٧٢١"', S('مسلم ٢٧٢١').indexOf(1)!==-1);
+  ok('search nonsense returns empty', S('zzzqqq').length===0);
+  // every dua screen renders exactly its data
+  var bad=[];
+  for(var i=0;i<duas.length;i++){ var x=duas[i]; await go(w,'#/dua/'+x.id+'/all');
+    var ar=d.querySelector('.arabic'), ur=d.querySelector('.urdu');
+    if(!ar||!ur||ar.textContent!==x.arabic||ur.textContent!==x.urdu||d.querySelector('.meta').textContent.indexOf(x.ref)===-1) bad.push(x.id); }
+  ok('all 172 dua screens render arabic+urdu+ref identical to data', bad.length===0, bad);
+  // dua screen features
+  await go(w,'#/dua/5/morning'); // 5 is not in morning -> ctx fallback check
+  await go(w,'#/dua/17/morning');
+  ok('arabic block is RTL', d.querySelector('.arabic').getAttribute('dir')==='rtl');
+  ok('urdu block is RTL', d.querySelector('.urdu').getAttribute('dir')==='rtl');
+  ['bCopy','bShare','bFav','bNext','bPrev','bRead'].forEach(function(id){ ok('button #'+id+' exists', !!d.getElementById(id)); });
+  var copied=null; w.navigator.clipboard && (w.navigator.clipboard.writeText=function(t){ copied=t; return Promise.resolve(); });
+  if(!w.navigator.clipboard){ Object.defineProperty(w.navigator,'clipboard',{value:{writeText:function(t){copied=t;return Promise.resolve();}}}); }
+  d.getElementById('bCopy').click(); await wait(50);
+  var dd=duas.find(x=>x.id===17);
+  ok('copy includes arabic+urdu+reference', copied && copied.indexOf(dd.arabic)!==-1 && copied.indexOf(dd.urdu)!==-1 && copied.indexOf(dd.ref)!==-1);
+  ok('copy toast message shown', d.getElementById('toast').textContent==='دعا کامیابی سے کاپی ہوگئی۔' && d.getElementById('toast').classList.contains('show'));
+  // next / prev
+  d.getElementById('bNext').click(); await wait(80);
+  ok('next goes to following dua in list', /#\/dua\/\d+\/morning/.test(w.location.hash) && w.location.hash!=='#/dua/17/morning', w.location.hash);
+  d.getElementById('bPrev').click(); await wait(80);
+  ok('prev returns', w.location.hash==='#/dua/17/morning', w.location.hash);
+  // favourites
+  d.getElementById('bFav').click(); await wait(50);
+  ok('favourite saved to localStorage', JSON.parse(w.localStorage.getItem('rd_favs')).indexOf(17)!==-1);
+  d.getElementById('bRead').click(); await wait(50);
+  ok('read mark saved', JSON.parse(w.localStorage.getItem('rd_read')).ids.indexOf(17)!==-1);
+  await go(w,'#/favs'); ok('favourites screen lists it', d.querySelectorAll('.list-item').length===1);
+  await go(w,'#/daily'); ok('daily checklist shows 1 item done', d.querySelectorAll('.list-item .done').length>=1);
+  // persistence across reload
+  var persisted = await new Promise(function(res){ f.onload=function(){ setTimeout(function(){ var w2=f.contentWindow; w2.location.hash='#/favs'; setTimeout(function(){ res(w2.document.querySelectorAll('.list-item').length); },150); },300); }; w.location.reload(); });
+  ok('favourite persists after app reload', persisted===1, persisted);
+  w=f.contentWindow; d=w.document;
+  // settings
+  await go(w,'#/settings');
+  var s=d.getElementById('sAr'); s.value=44; s.dispatchEvent(new Event('input')); 
+  ok('arabic font size setting applies', w.document.documentElement.style.getPropertyValue('--ar-size')==='44px');
+  var u=d.getElementById('sUr'); u.value=26; u.dispatchEvent(new Event('input'));
+  ok('urdu font size setting applies', w.document.documentElement.style.getPropertyValue('--ur-size')==='26px');
+  d.getElementById('sTheme').click(); ok('dark mode applies', w.document.documentElement.getAttribute('data-theme')==='dark');
+  // all list screens non-empty
+  for(var c of D.cats){ await go(w,'#/cat/'+c.id); ok('category '+c.id+' lists '+c.ids.length, d.querySelectorAll('.list-item').length===c.ids.length); }
+  await go(w,'#/home'); ok('home shows search bar + 12+ tiles', !!d.getElementById('q') && d.querySelectorAll('.tile').length>=12);
+  ok('home shows author', d.body.textContent.indexOf('مؤلف مفتی محمد سہیل البازی')!==-1);
+  await go(w,'#/search/'+encodeURIComponent('نظر بد')); ok('search screen shows results', d.querySelectorAll('.list-item').length>=2);
+  await go(w,'#/about'); ok('about screen renders', d.querySelector('.dua')!==null);
+  ok('no inline off-line violations (no http(s) resources in app html)', !/https?:\/\//.test(await (await fetch('../www/index.html')).text()));
+ }catch(e){ results.push('FAIL exception: '+e.message); }
+ var fails=results.filter(r=>r.indexOf('FAIL')===0).length;
+ document.getElementById('out').textContent=results.join('\n')+'\nSUMMARY pass='+(results.length-fails)+' fail='+fails;
+ document.title='done';
+};
+</script>

@@ -1,0 +1,51 @@
+PASS 172 duas loaded
+PASS ids unique 1..172
+PASS every dua has arabic/urdu/ref/title
+PASS every dua in at least one category
+PASS search "نظر بد" finds evil-eye duas 56 & 59
+PASS search with diacritics same result
+PASS search by reference "مسلم 2721" finds dua 1
+PASS search Arabic with harakat "أَعُوذُ بِكَ" finds results
+PASS search Arabic without harakat "اعوذ بك" same as with
+PASS search Urdu "شفا" finds results
+PASS search Arabic-Indic digits "٢٧٢١"
+PASS search nonsense returns empty
+PASS all 172 dua screens render arabic+urdu+ref identical to data
+PASS arabic block is RTL
+PASS urdu block is RTL
+PASS button #bCopy exists
+PASS button #bShare exists
+PASS button #bFav exists
+PASS button #bNext exists
+PASS button #bPrev exists
+PASS button #bRead exists
+PASS copy includes arabic+urdu+reference
+PASS copy toast message shown
+PASS next goes to following dua in list
+PASS prev returns
+PASS favourite saved to localStorage
+PASS read mark saved
+PASS favourites screen lists it
+PASS daily checklist shows 1 item done
+PASS favourite persists after app reload
+PASS arabic font size setting applies
+PASS urdu font size setting applies
+PASS dark mode applies
+PASS category morning lists 13
+PASS category evening lists 8
+PASS category evil_eye lists 2
+PASS category magic_shaitan lists 10
+PASS category illness lists 11
+PASS category daily lists 31
+PASS category sleep lists 8
+PASS category salah lists 29
+PASS category distress lists 18
+PASS category istighfar lists 8
+PASS category janaza lists 8
+PASS category other lists 50
+PASS home shows search bar + 12+ tiles
+PASS home shows author
+PASS search screen shows results
+PASS about screen renders
+PASS no inline off-line violations (no http(s) resources in app html)
+SUMMARY pass=50 fail=0

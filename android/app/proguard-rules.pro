@@ -1,0 +1,1 @@
+-keepclassmembers class com.albazi.roohanidhaal.MainActivity$Bridge { @android.webkit.JavascriptInterface <methods>; }
