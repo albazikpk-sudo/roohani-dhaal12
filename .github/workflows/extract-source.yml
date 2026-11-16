@@ -1,3 +1,4 @@
+
 name: Extract Roohani Dhaal ZIP
 
 on:
@@ -5,7 +6,7 @@ on:
     branches:
       - main
     paths:
-      - roohani-dhaal-api36-sdk24-ready-source.zip
+      - roohani-dhaal-github-ready.zip
   workflow_dispatch:
 
 permissions:
@@ -26,7 +27,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          ZIP="roohani-dhaal-api36-sdk24-ready-source.zip"
+          ZIP="roohani-dhaal-github-ready.zip"
 
           if [ ! -f "$ZIP" ]; then
             echo "ERROR: Source ZIP not found: $ZIP"
@@ -39,16 +40,18 @@ jobs:
           import zipfile
           from pathlib import Path
 
-          archive = Path("roohani-dhaal-api36-sdk24-ready-source.zip")
+          archive = Path("roohani-dhaal-github-ready.zip")
           destination = Path("/tmp/roohani-source").resolve()
 
           with zipfile.ZipFile(archive) as z:
               for item in z.infolist():
                   target = (destination / item.filename).resolve()
+
                   if target != destination and destination not in target.parents:
                       raise SystemExit(
                           f"Unsafe ZIP path detected: {item.filename}"
                       )
+
               z.extractall(destination)
 
           print("ZIP extracted successfully.")
@@ -68,11 +71,8 @@ jobs:
 
           cp -a "$SOURCE_DIR"/. .
 
-          # Do not automatically commit another GitHub Actions workflow.
-          # It must be added separately with the required permissions.
+          # Remove old Android build workflow if included in ZIP.
           rm -f .github/workflows/android-build.yml
-
-          # Keep the original ZIP to avoid triggering this workflow again.
 
           # Verify required source files.
           test -f package.json
