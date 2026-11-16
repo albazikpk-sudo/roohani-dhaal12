@@ -1,0 +1,129 @@
+name: Android Build (APK + AAB)
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      test_key:
+        description: 'No keystore secrets yet? Sign with a TEMPORARY key so you get installable APK/AAB for testing (NOT for Play Store)'
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      # Production AdMob IDs (optional). If any is missing, release uses Google TEST ads — do not publish that build.
+      ADMOB_APP_ID: ${{ secrets.ADMOB_APP_ID }}
+      ADMOB_BANNER_ID: ${{ secrets.ADMOB_BANNER_ID }}
+      ADMOB_INTERSTITIAL_ID: ${{ secrets.ADMOB_INTERSTITIAL_ID }}
+      VERSION_CODE: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate dua data (172 entries, none empty)
+        run: |
+          python3 - <<'PY'
+          import json, sys
+          d = json.load(open('www/data/duas.json', encoding='utf-8'))['duas']
+          bad = [x['id'] for x in d if not (x['arabic'] and x['urdu'] and x['ref'] and x['title'])]
+          print(len(d), 'duas; incomplete:', bad)
+          sys.exit(1 if bad or len(d) != 172 else 0)
+          PY
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK (platform 36)
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Build debug APK
+        working-directory: android
+        run: gradle --no-daemon assembleDebug
+
+      - name: Prepare signing key
+        id: ks
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          TEST_KEY: ${{ inputs.test_key }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            echo "have=true" >> "$GITHUB_OUTPUT"; echo "suffix=" >> "$GITHUB_OUTPUT"
+          elif [ "$TEST_KEY" = "true" ]; then
+            P=$(openssl rand -hex 12); echo "::add-mask::$P"
+            keytool -genkeypair -keystore "$RUNNER_TEMP/release.keystore" -alias testkey -keyalg RSA -keysize 2048 -validity 3650 \
+              -storepass "$P" -keypass "$P" -dname "CN=Roohani Dhaal TEST, O=TEST, C=PK"
+            echo "TEST_KS_PASS=$P" >> "$GITHUB_ENV"
+            echo "::warning title=TEMPORARY TEST KEY::Release files are signed with a throw-away key. Install/test only. Do NOT upload to Play."
+            echo "have=true" >> "$GITHUB_OUTPUT"; echo "suffix=-TESTKEY" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning title=No signing key::KEYSTORE_BASE64 secret not set. Only the debug APK will be produced. Run 'Create Keystore' workflow, or re-run this one with test_key=true."
+            echo "have=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build signed release APK and AAB
+        if: steps.ks.outputs.have == 'true'
+        working-directory: android
+        env:
+          KEYSTORE_FILE: ${{ runner.temp }}/release.keystore
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD || env.TEST_KS_PASS }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS || 'testkey' }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || env.TEST_KS_PASS }}
+        run: gradle --no-daemon assembleRelease bundleRelease
+
+      - name: Verify signatures
+        if: steps.ks.outputs.have == 'true'
+        run: |
+          set -e
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          APK=$(ls android/app/build/outputs/apk/release/*.apk | head -1)
+          AAB=$(ls android/app/build/outputs/bundle/release/*.aab | head -1)
+          "$BT/apksigner" verify --verbose --print-certs "$APK"
+          jarsigner -verify -verbose:summary -certs "$AAB" | tee /tmp/aab-verify.txt
+          grep -q "jar verified" /tmp/aab-verify.txt
+          keytool -printcert -jarfile "$AAB" | grep -E "SHA256|Owner"
+
+      - name: Remove keystore from runner
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release.keystore"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: roohani-dhaal-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        if: steps.ks.outputs.have == 'true'
+        with:
+          name: roohani-dhaal-release-apk${{ steps.ks.outputs.suffix }}
+          path: android/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        if: steps.ks.outputs.have == 'true'
+        with:
+          name: roohani-dhaal-release-aab${{ steps.ks.outputs.suffix }}
+          path: android/app/build/outputs/bundle/release/*.aab
+          if-no-files-found: error
+
+      - name: Upload build reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-reports
+          path: |
+            android/app/build/reports/**
+            android/build/reports/**
+          if-no-files-found: ignore
