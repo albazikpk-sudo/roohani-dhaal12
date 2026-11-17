@@ -1,14 +1,19 @@
-plugins { id 'com.android.application' }
 
-// ---- Google's official AdMob TEST IDs (safe for development) ----
+plugins {
+    id 'com.android.application'
+}
+
+// ---- Google's official AdMob TEST IDs (DEBUG ONLY) ----
 def TEST_APP_ID = "ca-app-pub-3940256099942544~3347511713"
 def TEST_BANNER = "ca-app-pub-3940256099942544/9214589741"
-def TEST_INTERSTITIAL = "ca-app-pub-3940256099942544/1033173712"
 
-// ---- Production IDs come ONLY from environment / gradle properties (never hardcoded) ----
-def prop = { String n -> (System.getenv(n) ?: (project.findProperty(n) ?: "")).toString().trim() }
-def prodApp = prop("ADMOB_APP_ID"), prodBanner = prop("ADMOB_BANNER_ID"), prodInter = prop("ADMOB_INTERSTITIAL_ID")
-def prodComplete = prodApp && prodBanner && prodInter
+// ---- Production AdMob IDs from GitHub Secrets ----
+def prop = { String n ->
+    (System.getenv(n) ?: (project.findProperty(n) ?: "")).toString().trim()
+}
+
+def prodApp = prop("ADMOB_APP_ID")
+def prodBanner = prop("ADMOB_BANNER_ID")
 
 android {
     namespace 'com.albazi.roohanidhaal'
@@ -18,6 +23,7 @@ android {
         applicationId "com.albazi.roohanidhaal"
         minSdk 24
         targetSdk 36
+
         versionCode (prop("VERSION_CODE") ? prop("VERSION_CODE").toInteger() : 1)
         versionName (prop("VERSION_NAME") ?: "1.0.0")
     }
@@ -25,6 +31,7 @@ android {
     signingConfigs {
         release {
             def ks = prop("KEYSTORE_FILE")
+
             if (ks && file(ks).exists()) {
                 storeFile file(ks)
                 storePassword prop("KEYSTORE_PASSWORD")
@@ -37,41 +44,64 @@ android {
     buildTypes {
         debug {
             manifestPlaceholders = [admobAppId: TEST_APP_ID]
+
             buildConfigField "String", "ADMOB_BANNER_ID", "\"${TEST_BANNER}\""
-            buildConfigField "String", "ADMOB_INTERSTITIAL_ID", "\"${TEST_INTERSTITIAL}\""
+            buildConfigField "String", "ADMOB_INTERSTITIAL_ID", '""'
+
             applicationIdSuffix ".debug"
             versionNameSuffix "-debug"
         }
+
         release {
             minifyEnabled true
             shrinkResources true
+
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            if (prodComplete) {
-                manifestPlaceholders = [admobAppId: prodApp]
-                buildConfigField "String", "ADMOB_BANNER_ID", "\"${prodBanner}\""
-                buildConfigField "String", "ADMOB_INTERSTITIAL_ID", "\"${prodInter}\""
-            } else {
-                logger.warn("WARNING: production AdMob IDs not set (ADMOB_APP_ID / ADMOB_BANNER_ID / ADMOB_INTERSTITIAL_ID). Release build will use Google TEST ads. Do NOT publish this build.")
-                manifestPlaceholders = [admobAppId: TEST_APP_ID]
-                buildConfigField "String", "ADMOB_BANNER_ID", "\"${TEST_BANNER}\""
-                buildConfigField "String", "ADMOB_INTERSTITIAL_ID", "\"${TEST_INTERSTITIAL}\""
+
+            // Production AdMob IDs are mandatory.
+            // Never generate a publishable release using TEST ads.
+
+            if (!prodApp || !prodBanner) {
+                throw new GradleException(
+                    "Production AdMob IDs missing. Check ADMOB_APP_ID and ADMOB_BANNER_ID GitHub Secrets."
+                )
             }
+
+            manifestPlaceholders = [admobAppId: prodApp]
+
+            buildConfigField "String", "ADMOB_BANNER_ID", "\"${prodBanner}\""
+            buildConfigField "String", "ADMOB_INTERSTITIAL_ID", '""'
+
             if (signingConfigs.release.storeFile != null) {
                 signingConfig signingConfigs.release
             } else {
-                logger.warn("WARNING: no keystore configured; release output will be UNSIGNED.")
+                throw new GradleException(
+                    "Release signing keystore is missing. Check GitHub signing secrets."
+                )
             }
         }
     }
 
-    sourceSets { main { assets.srcDirs += ["$buildDir/generated/www-assets"] } }
+    sourceSets {
+        main {
+            assets.srcDirs += ["$buildDir/generated/www-assets"]
+        }
+    }
 
-    buildFeatures { buildConfig true }
+    buildFeatures {
+        buildConfig true
+    }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
-    bundle { language { enableSplit = false } }
+
+    bundle {
+        language {
+            enableSplit = false
+        }
+    }
 }
 
 dependencies {
@@ -81,9 +111,14 @@ dependencies {
     implementation 'com.google.android.ump:user-messaging-platform:3.2.0'
 }
 
-// Copy the web app (../www at repo root) into the APK as assets/www on every build.
+// Copy web application into Android assets on every build.
 tasks.register('syncWww', Copy) {
     from "$rootDir/../www"
     into "$buildDir/generated/www-assets/www"
 }
-tasks.matching { it.name == 'preBuild' }.configureEach { dependsOn 'syncWww' }
+
+tasks.matching {
+    it.name == 'preBuild'
+}.configureEach {
+    dependsOn 'syncWww'
+}
