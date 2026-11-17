@@ -3,17 +3,27 @@ plugins {
     id 'com.android.application'
 }
 
-// ---- Google's official AdMob TEST IDs (DEBUG ONLY) ----
+// ==================================================
+// GOOGLE OFFICIAL TEST IDS (DEBUG ONLY)
+// ==================================================
+
 def TEST_APP_ID = "ca-app-pub-3940256099942544~3347511713"
 def TEST_BANNER = "ca-app-pub-3940256099942544/9214589741"
 
-// ---- Production AdMob IDs from GitHub Secrets ----
+// ==================================================
+// PRODUCTION ADMOB IDS FROM GITHUB SECRETS
+// ==================================================
+
 def prop = { String n ->
     (System.getenv(n) ?: (project.findProperty(n) ?: "")).toString().trim()
 }
 
 def prodApp = prop("ADMOB_APP_ID")
 def prodBanner = prop("ADMOB_BANNER_ID")
+
+// ==================================================
+// ANDROID CONFIGURATION
+// ==================================================
 
 android {
     namespace 'com.albazi.roohanidhaal'
@@ -24,9 +34,18 @@ android {
         minSdk 24
         targetSdk 36
 
-        versionCode (prop("VERSION_CODE") ? prop("VERSION_CODE").toInteger() : 1)
+        versionCode (
+            prop("VERSION_CODE")
+                ? prop("VERSION_CODE").toInteger()
+                : 1
+        )
+
         versionName (prop("VERSION_NAME") ?: "1.0.0")
     }
+
+    // ==================================================
+    // RELEASE SIGNING
+    // ==================================================
 
     signingConfigs {
         release {
@@ -41,50 +60,66 @@ android {
         }
     }
 
-    buildTypes {
-        debug {
-            manifestPlaceholders = [admobAppId: TEST_APP_ID]
+    // ==================================================
+    // BUILD TYPES
+    // ==================================================
 
-            buildConfigField "String", "ADMOB_BANNER_ID", "\"${TEST_BANNER}\""
-            buildConfigField "String", "ADMOB_INTERSTITIAL_ID", '""'
+    buildTypes {
+
+        // DEBUG BUILD: GOOGLE TEST ADS
+        debug {
+            manifestPlaceholders = [
+                admobAppId: TEST_APP_ID
+            ]
+
+            buildConfigField "String",
+                "ADMOB_BANNER_ID",
+                "\"${TEST_BANNER}\""
+
+            buildConfigField "String",
+                "ADMOB_INTERSTITIAL_ID",
+                '""'
 
             applicationIdSuffix ".debug"
             versionNameSuffix "-debug"
         }
 
+        // RELEASE BUILD: REAL ADMOB ADS
         release {
             minifyEnabled true
             shrinkResources true
 
-            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            proguardFiles getDefaultProguardFile(
+                'proguard-android-optimize.txt'
+            ), 'proguard-rules.pro'
 
-            // Production AdMob IDs are mandatory.
-            // Never generate a publishable release using TEST ads.
+            manifestPlaceholders = [
+                admobAppId: prodApp ?: TEST_APP_ID
+            ]
 
-            if (!prodApp || !prodBanner) {
-                throw new GradleException(
-                    "Production AdMob IDs missing. Check ADMOB_APP_ID and ADMOB_BANNER_ID GitHub Secrets."
-                )
-            }
+            buildConfigField "String",
+                "ADMOB_BANNER_ID",
+                "\"${prodBanner ?: TEST_BANNER}\""
 
-            manifestPlaceholders = [admobAppId: prodApp]
-
-            buildConfigField "String", "ADMOB_BANNER_ID", "\"${prodBanner}\""
-            buildConfigField "String", "ADMOB_INTERSTITIAL_ID", '""'
+            buildConfigField "String",
+                "ADMOB_INTERSTITIAL_ID",
+                '""'
 
             if (signingConfigs.release.storeFile != null) {
                 signingConfig signingConfigs.release
-            } else {
-                throw new GradleException(
-                    "Release signing keystore is missing. Check GitHub signing secrets."
-                )
             }
         }
     }
 
+    // ==================================================
+    // WEB ASSETS
+    // ==================================================
+
     sourceSets {
         main {
-            assets.srcDirs += ["$buildDir/generated/www-assets"]
+            assets.srcDirs += [
+                "$buildDir/generated/www-assets"
+            ]
         }
     }
 
@@ -92,10 +127,18 @@ android {
         buildConfig true
     }
 
+    // ==================================================
+    // JAVA VERSION
+    // ==================================================
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+
+    // ==================================================
+    // ANDROID APP BUNDLE
+    // ==================================================
 
     bundle {
         language {
@@ -104,16 +147,86 @@ android {
     }
 }
 
+// ==================================================
+// RELEASE VALIDATION
+// Runs ONLY when building RELEASE.
+// Debug APK does not require a keystore.
+// ==================================================
+
+tasks.register("verifyReleaseConfiguration") {
+    doLast {
+
+        def ks = prop("KEYSTORE_FILE")
+
+        def missing = []
+
+        if (!prodApp) {
+            missing.add("ADMOB_APP_ID")
+        }
+
+        if (!prodBanner) {
+            missing.add("ADMOB_BANNER_ID")
+        }
+
+        if (!ks || !file(ks).isFile()) {
+            missing.add("Valid KEYSTORE_FILE")
+        }
+
+        if (!prop("KEYSTORE_PASSWORD")) {
+            missing.add("KEYSTORE_PASSWORD")
+        }
+
+        if (!prop("KEY_ALIAS")) {
+            missing.add("KEY_ALIAS")
+        }
+
+        if (!prop("KEY_PASSWORD")) {
+            missing.add("KEY_PASSWORD")
+        }
+
+        if (!missing.isEmpty()) {
+            throw new GradleException(
+                "Release configuration incomplete: " +
+                missing.join(", ")
+            )
+        }
+
+        println "Release configuration verified."
+        println "Production Banner AdMob IDs configured."
+        println "Release signing keystore verified."
+    }
+}
+
+// Attach validation to Release only.
+// Debug build remains independent of signing secrets.
+
+tasks.configureEach {
+    if (name == "preReleaseBuild") {
+        dependsOn("verifyReleaseConfiguration")
+    }
+}
+
+// ==================================================
+// DEPENDENCIES
+// ==================================================
+
 dependencies {
     implementation 'androidx.appcompat:appcompat:1.7.1'
+
     implementation 'androidx.webkit:webkit:1.14.0'
+
     implementation 'com.google.android.gms:play-services-ads:24.5.0'
+
     implementation 'com.google.android.ump:user-messaging-platform:3.2.0'
 }
 
-// Copy web application into Android assets on every build.
+// ==================================================
+// COPY WEB APP INTO ANDROID ASSETS
+// ==================================================
+
 tasks.register('syncWww', Copy) {
     from "$rootDir/../www"
+
     into "$buildDir/generated/www-assets/www"
 }
 
