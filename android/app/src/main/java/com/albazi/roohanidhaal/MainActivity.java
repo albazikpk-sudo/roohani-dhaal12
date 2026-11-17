@@ -1,3 +1,4 @@
+
 package com.albazi.roohanidhaal;
 
 import android.annotation.SuppressLint;
@@ -5,9 +6,9 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
-import android.net.Uri;
 import android.os.Bundle;
 import android.util.DisplayMetrics;
+import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.JavascriptInterface;
@@ -30,11 +31,9 @@ import com.google.android.gms.ads.AdListener;
 import com.google.android.gms.ads.AdRequest;
 import com.google.android.gms.ads.AdSize;
 import com.google.android.gms.ads.AdView;
-import com.google.android.gms.ads.FullScreenContentCallback;
 import com.google.android.gms.ads.LoadAdError;
 import com.google.android.gms.ads.MobileAds;
-import com.google.android.gms.ads.interstitial.InterstitialAd;
-import com.google.android.gms.ads.interstitial.InterstitialAdLoadCallback;
+
 import com.google.android.ump.ConsentInformation;
 import com.google.android.ump.ConsentRequestParameters;
 import com.google.android.ump.UserMessagingPlatform;
@@ -42,171 +41,430 @@ import com.google.android.ump.UserMessagingPlatform;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Hosts the fully offline web app (assets/www) in a WebView.
- * Ads live in a native strip BELOW the WebView, so they can never cover the dua text
- * or the Copy/Share buttons. If ads fail or are disabled the app works unchanged.
+ * Offline Islamic Dua Application.
+ *
+ * Features:
+ * - WebView based offline application.
+ * - Native adaptive Banner Ad at the bottom.
+ * - No Interstitial Ads.
+ * - UMP consent management.
+ * - Ads never cover dua text or buttons.
  */
 public class MainActivity extends AppCompatActivity {
 
-    private static final String START_URL = "https://appassets.androidplatform.net/assets/www/index.html";
-    private static final long INTERSTITIAL_MIN_GAP_MS = 4 * 60 * 1000L;
+    private static final String START_URL =
+            "https://appassets.androidplatform.net/assets/www/index.html";
 
     private WebView webView;
     private FrameLayout adContainer;
     private AdView adView;
-    private InterstitialAd interstitial;
-    private long lastInterstitialShown = System.currentTimeMillis(); // no ad right after launch
-    private final AtomicBoolean adsStarted = new AtomicBoolean(false);
 
-    @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
+    private final AtomicBoolean adsStarted =
+            new AtomicBoolean(false);
+
+    @SuppressLint({
+            "SetJavaScriptEnabled",
+            "AddJavascriptInterface"
+    })
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        // Root layout
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundResource(R.color.green);
 
+        // WebView
         webView = new WebView(this);
-        root.addView(webView, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
+        root.addView(
+                webView,
+                new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        0,
+                        1f
+                )
+        );
+
+        // Native Banner Ad container
         adContainer = new FrameLayout(this);
         adContainer.setBackgroundColor(0xFFFFFFFF);
-        adContainer.setVisibility(View.GONE); // shown only once an ad has actually loaded
-        root.addView(adContainer, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        adContainer.setVisibility(View.GONE);
+
+        root.addView(
+                adContainer,
+                new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+        );
 
         setContentView(root);
 
-        ViewCompat.setOnApplyWindowInsetsListener(root, (v, windowInsets) -> {
-            Insets bars = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
-            Insets ime = windowInsets.getInsets(WindowInsetsCompat.Type.ime());
-            v.setPadding(bars.left, bars.top, bars.right, Math.max(bars.bottom, ime.bottom));
-            return WindowInsetsCompat.CONSUMED;
-        });
+        // System window insets
+        ViewCompat.setOnApplyWindowInsetsListener(
+                root,
+                (v, windowInsets) -> {
+
+                    Insets bars = windowInsets.getInsets(
+                            WindowInsetsCompat.Type.systemBars()
+                                    | WindowInsetsCompat.Type.displayCutout()
+                    );
+
+                    Insets ime = windowInsets.getInsets(
+                            WindowInsetsCompat.Type.ime()
+                    );
+
+                    v.setPadding(
+                            bars.left,
+                            bars.top,
+                            bars.right,
+                            Math.max(bars.bottom, ime.bottom)
+                    );
+
+                    return WindowInsetsCompat.CONSUMED;
+                }
+        );
 
         setupWebView();
-        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
-            @Override public void handleOnBackPressed() {
-                webView.evaluateJavascript("(function(){return window.__rdBack ? window.__rdBack() : false;})()", value -> {
-                    if (!"true".equals(value)) { setEnabled(false); getOnBackPressedDispatcher().onBackPressed(); }
-                });
-            }
-        });
+
+        // Android back button
+        getOnBackPressedDispatcher().addCallback(
+                this,
+                new OnBackPressedCallback(true) {
+
+                    @Override
+                    public void handleOnBackPressed() {
+
+                        webView.evaluateJavascript(
+                                "(function(){return window.__rdBack ? window.__rdBack() : false;})()",
+                                value -> {
+
+                                    if (!"true".equals(value)) {
+                                        setEnabled(false);
+                                        getOnBackPressedDispatcher()
+                                                .onBackPressed();
+                                    }
+                                }
+                        );
+                    }
+                }
+        );
 
         webView.loadUrl(START_URL);
+
+        // Consent first, then Banner Ads
         startConsentThenAds();
     }
 
+    // ==================================================
+    // WEBVIEW CONFIGURATION
+    // ==================================================
+
     @SuppressLint("SetJavaScriptEnabled")
     private void setupWebView() {
-        final WebViewAssetLoader loader = new WebViewAssetLoader.Builder()
-                .addPathHandler("/assets/", new WebViewAssetLoader.AssetsPathHandler(this))
-                .build();
-        WebSettings s = webView.getSettings();
-        s.setJavaScriptEnabled(true);
-        s.setDomStorageEnabled(true);          // favourites / settings persist across launches
-        s.setAllowFileAccess(false);
-        s.setAllowContentAccess(false);
-        s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
-        s.setTextZoom(100);
+
+        final WebViewAssetLoader loader =
+                new WebViewAssetLoader.Builder()
+                        .addPathHandler(
+                                "/assets/",
+                                new WebViewAssetLoader.AssetsPathHandler(this)
+                        )
+                        .build();
+
+        WebSettings settings = webView.getSettings();
+
+        settings.setJavaScriptEnabled(true);
+        settings.setDomStorageEnabled(true);
+        settings.setAllowFileAccess(false);
+        settings.setAllowContentAccess(false);
+
+        settings.setMixedContentMode(
+                WebSettings.MIXED_CONTENT_NEVER_ALLOW
+        );
+
+        settings.setTextZoom(100);
+
         webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
         webView.setBackgroundColor(0xFFF7F5EE);
-        webView.addJavascriptInterface(new Bridge(), "Android");
+
+        webView.addJavascriptInterface(
+                new Bridge(),
+                "Android"
+        );
+
         webView.setWebViewClient(new WebViewClient() {
-            @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
-                return loader.shouldInterceptRequest(request.getUrl());
+
+            @Override
+            public WebResourceResponse shouldInterceptRequest(
+                    WebView view,
+                    WebResourceRequest request
+            ) {
+                return loader.shouldInterceptRequest(
+                        request.getUrl()
+                );
             }
-            @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                // Everything is local; never navigate away from the app.
-                return !"appassets.androidplatform.net".equals(request.getUrl().getHost());
+
+            @Override
+            public boolean shouldOverrideUrlLoading(
+                    WebView view,
+                    WebResourceRequest request
+            ) {
+                return !"appassets.androidplatform.net".equals(
+                        request.getUrl().getHost()
+                );
             }
         });
     }
 
-    /** JavaScript -> native functions. Only these three are exposed. */
+    // ==================================================
+    // JAVASCRIPT BRIDGE
+    // No Interstitial Ad method
+    // ==================================================
+
     public class Bridge {
-        @JavascriptInterface public void copyText(final String text) {
+
+        @JavascriptInterface
+        public void copyText(final String text) {
+
             runOnUiThread(() -> {
-                ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-                if (cm != null) cm.setPrimaryClip(ClipData.newPlainText("dua", text));
+
+                ClipboardManager cm =
+                        (ClipboardManager) getSystemService(
+                                Context.CLIPBOARD_SERVICE
+                        );
+
+                if (cm != null) {
+                    cm.setPrimaryClip(
+                            ClipData.newPlainText("dua", text)
+                    );
+                }
             });
         }
-        @JavascriptInterface public void shareText(final String text) {
+
+        @JavascriptInterface
+        public void shareText(final String text) {
+
             runOnUiThread(() -> {
-                Intent send = new Intent(Intent.ACTION_SEND);
+
+                Intent send = new Intent(
+                        Intent.ACTION_SEND
+                );
+
                 send.setType("text/plain");
-                send.putExtra(Intent.EXTRA_TEXT, text);
-                startActivity(Intent.createChooser(send, "دعا شیئر کریں"));
+
+                send.putExtra(
+                        Intent.EXTRA_TEXT,
+                        text
+                );
+
+                startActivity(
+                        Intent.createChooser(
+                                send,
+                                "دعا شیئر کریں"
+                        )
+                );
             });
-        }
-        @JavascriptInterface public void maybeShowInterstitial() {
-            runOnUiThread(MainActivity.this::showInterstitialIfAllowed);
         }
     }
 
-    // ---------------- Ads (consent first, never blocks the app) ----------------
+    // ==================================================
+    // CONSENT MANAGEMENT (UMP)
+    // ==================================================
 
     private void startConsentThenAds() {
+
         try {
-            ConsentInformation info = UserMessagingPlatform.getConsentInformation(this);
-            ConsentRequestParameters params = new ConsentRequestParameters.Builder().build();
-            info.requestConsentInfoUpdate(this, params,
-                () -> UserMessagingPlatform.loadAndShowConsentFormIfRequired(this, err -> {
-                    if (info.canRequestAds()) startAds();
-                }),
-                err -> { if (info.canRequestAds()) startAds(); });
-            if (info.canRequestAds()) startAds();
-        } catch (Throwable t) { /* ads are optional */ }
+
+            ConsentInformation info =
+                    UserMessagingPlatform.getConsentInformation(this);
+
+            ConsentRequestParameters params =
+                    new ConsentRequestParameters.Builder().build();
+
+            info.requestConsentInfoUpdate(
+                    this,
+                    params,
+
+                    () -> UserMessagingPlatform
+                            .loadAndShowConsentFormIfRequired(
+                                    this,
+                                    error -> {
+
+                                        if (info.canRequestAds()) {
+                                            startAds();
+                                        }
+                                    }
+                            ),
+
+                    error -> {
+
+                        if (info.canRequestAds()) {
+                            startAds();
+                        }
+                    }
+            );
+
+            // Previously obtained consent
+            if (info.canRequestAds()) {
+                startAds();
+            }
+
+        } catch (Throwable t) {
+
+            // App continues if advertising is unavailable.
+        }
     }
+
+    // ==================================================
+    // ADMOB INITIALIZATION
+    // ==================================================
 
     private void startAds() {
-        if (!adsStarted.compareAndSet(false, true)) return;
+
+        if (!adsStarted.compareAndSet(false, true)) {
+            return;
+        }
+
         try {
-            MobileAds.initialize(this, status -> { });
+
+            MobileAds.initialize(
+                    this,
+                    status -> { }
+            );
+
             loadBanner();
-            loadInterstitial();
-        } catch (Throwable t) { /* ads are optional */ }
+
+        } catch (Throwable t) {
+
+            // Advertising is optional.
+        }
     }
+
+    // ==================================================
+    // ADAPTIVE BANNER AD
+    // ==================================================
 
     private void loadBanner() {
-        DisplayMetrics dm = getResources().getDisplayMetrics();
-        int widthDp = (int) (dm.widthPixels / dm.density);
-        adView = new AdView(this);
-        adView.setAdUnitId(BuildConfig.ADMOB_BANNER_ID);
-        adView.setAdSize(AdSize.getCurrentOrientationAnchoredAdaptiveBannerAdSize(this, widthDp));
-        adView.setAdListener(new AdListener() {
-            @Override public void onAdLoaded() { adContainer.setVisibility(View.VISIBLE); }
-            @Override public void onAdFailedToLoad(LoadAdError e) { adContainer.setVisibility(View.GONE); }
-        });
-        adContainer.addView(adView);
-        adView.loadAd(new AdRequest.Builder().build());
-    }
 
-    private void loadInterstitial() {
-        InterstitialAd.load(this, BuildConfig.ADMOB_INTERSTITIAL_ID, new AdRequest.Builder().build(),
-            new InterstitialAdLoadCallback() {
-                @Override public void onAdLoaded(InterstitialAd ad) { interstitial = ad; }
-                @Override public void onAdFailedToLoad(LoadAdError e) { interstitial = null; }
+        try {
+
+            DisplayMetrics dm =
+                    getResources().getDisplayMetrics();
+
+            int widthDp =
+                    (int) (dm.widthPixels / dm.density);
+
+            if (widthDp <= 0) {
+                return;
+            }
+
+            adView = new AdView(this);
+
+            // Production or Debug ID from build.gradle
+            adView.setAdUnitId(
+                    BuildConfig.ADMOB_BANNER_ID
+            );
+
+            AdSize adSize =
+                    AdSize.getCurrentOrientationAnchoredAdaptiveBannerAdSize(
+                            this,
+                            widthDp
+                    );
+
+            adView.setAdSize(adSize);
+
+            adView.setAdListener(new AdListener() {
+
+                @Override
+                public void onAdLoaded() {
+
+                    adContainer.setVisibility(
+                            View.VISIBLE
+                    );
+                }
+
+                @Override
+                public void onAdFailedToLoad(
+                        LoadAdError error
+                ) {
+
+                    adContainer.setVisibility(
+                            View.GONE
+                    );
+                }
             });
+
+            FrameLayout.LayoutParams params =
+                    new FrameLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT,
+                            Gravity.CENTER
+                    );
+
+            adContainer.addView(
+                    adView,
+                    params
+            );
+
+            adView.loadAd(
+                    new AdRequest.Builder().build()
+            );
+
+        } catch (Throwable t) {
+
+            adContainer.setVisibility(View.GONE);
+        }
     }
 
-    private void showInterstitialIfAllowed() {
-        if (interstitial == null) return;
-        if (System.currentTimeMillis() - lastInterstitialShown < INTERSTITIAL_MIN_GAP_MS) return;
-        final InterstitialAd ad = interstitial;
-        interstitial = null;
-        ad.setFullScreenContentCallback(new FullScreenContentCallback() {
-            @Override public void onAdDismissedFullScreenContent() { lastInterstitialShown = System.currentTimeMillis(); loadInterstitial(); }
-            @Override public void onAdFailedToShowFullScreenContent(com.google.android.gms.ads.AdError e) { loadInterstitial(); }
-        });
-        ad.show(this);
+    // ==================================================
+    // ACTIVITY LIFECYCLE
+    // ==================================================
+
+    @Override
+    protected void onPause() {
+
+        if (adView != null) {
+            adView.pause();
+        }
+
+        if (webView != null) {
+            webView.onPause();
+        }
+
+        super.onPause();
     }
 
-    @Override protected void onPause() { if (adView != null) adView.pause(); super.onPause(); }
-    @Override protected void onResume() { super.onResume(); if (adView != null) adView.resume(); }
-    @Override protected void onDestroy() {
-        if (adView != null) adView.destroy();
-        if (webView != null) { webView.removeJavascriptInterface("Android"); webView.destroy(); }
+    @Override
+    protected void onResume() {
+
+        super.onResume();
+
+        if (adView != null) {
+            adView.resume();
+        }
+
+        if (webView != null) {
+            webView.onResume();
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+
+        if (adView != null) {
+            adContainer.removeView(adView);
+            adView.destroy();
+            adView = null;
+        }
+
+        if (webView != null) {
+            webView.removeJavascriptInterface("Android");
+            webView.destroy();
+            webView = null;
+        }
+
         super.onDestroy();
     }
 }
